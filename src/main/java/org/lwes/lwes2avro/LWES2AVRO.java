@@ -57,6 +57,8 @@ public class LWES2AVRO {
           if ((fieldType.token & 0xc0) == 0) {
             // classic primitive types
             fieldTypeAsJsonString = "[null,\"" + primTypeAsString + "\"]";
+          } else if (fieldType == FieldType.BYTE_ARRAY) {
+            fieldTypeAsJsonString = "[null,\"bytes\"]";
           } else if ((fieldType.token & 0x40) == 0) {
             // arrays of classic primitive types
             fieldTypeAsJsonString = "[null,{\"type\":\"array\",\"items\":\""
@@ -113,48 +115,48 @@ public class LWES2AVRO {
           pr.print("    out[outIndex++] = 2;\n");
           switch (fieldType) {
             case UINT16:
-              pr.print("    Integer v = event.getUInt16(\"" + fieldName \");\n");
+              pr.print("    Integer v = event.getUInt16(\"" + fieldName + "\");\n");
               pr.print("    outIndex = Helpers.writeIntAvroZigzag(v, outIndex, out);\n");
               break;
             case INT16:
-              pr.print("    Short v = event.getInt16(\"" + fieldName \");\n");
+              pr.print("    Short v = event.getInt16(\"" + fieldName + "\");\n");
               pr.print("    outIndex = Helpers.writeIntAvroZigzag(v, outIndex, out);\n");
               break;
             case UINT32:
-              pr.print("    Long v = event.getUInt32(\"" + fieldName \");\n");
+              pr.print("    Long v = event.getUInt32(\"" + fieldName + "\");\n");
               pr.print("    outIndex = Helpers.writeLongAvroZigzag(v, outIndex, out);\n");
               break;
             case INT32:
-              pr.print("    Integer v = event.getInt32(\"" + fieldName \");\n");
+              pr.print("    Integer v = event.getInt32(\"" + fieldName + "\");\n");
               pr.print("    outIndex = Helpers.writeIntAvroZigzag(v, outIndex, out);\n");
               break;
             case STRING:
-              pr.print("    String v = event.getString(\"" + fieldName \");\n");
+              pr.print("    String v = event.getString(\"" + fieldName + "\");\n");
               pr.print("    outIndex = Helpers.writeString(v, outIndex, out);\n");
               break;
             case IPADDR:
-              pr.print("    byte[] v = event.getIPAddress(\"" + fieldName \");\n");
+              pr.print("    byte[] v = event.getIPAddress(\"" + fieldName + "\");\n");
               pr.print("    outIndex = Helpers.writeIPAddress(v, outIndex, out);\n");
               break;
             case INT64:
-              pr.print("    byte[] v = event.getIPAddress(\"" + fieldName \");\n");
+              pr.print("    byte[] v = event.getIPAddress(\"" + fieldName + "\");\n");
               pr.print("    outIndex = Helpers.writeLongAvroZigzag(v, outIndex, out);\n");
               break;
             case UINT64:
-              pr.print("    BigInteger v = event.getUInt64(\"" + fieldName \");\n");
-              pr.print("    outIndex = Helpers.writeBigIntegerAvroZigzag(v, outIndex, out);\n");
+              pr.print("    BigInteger v = event.getUInt64(\"" + fieldName + "\");\n");
+              pr.print("    outIndex = Helpers.writeLongAvroZigzag(v.longValue(), outIndex, out);\n");
               break;
             case BOOLEAN:
-              pr.print("    boolean v = event.getBoolean(\"" + fieldName \");\n");
+              pr.print("    boolean v = event.getBoolean(\"" + fieldName + "\");\n");
               pr.print("    outIndex = Helpers.writeBoolean(v, outIndex, out);\n");
               break;
             case BYTE:
-              pr.print("    int v = event.getByte(\"" + fieldName \");\n");
+              pr.print("    int v = event.getByte(\"" + fieldName + "\");\n");
               pr.print("    v &= 0xff;\n");
               pr.print("    outIndex = Helpers.writeIntAvroZigzag(v, outIndex, out);\n");
               break;
             case FLOAT:
-              pr.print("    outIndex = Helpers.writeFloat(event.getFloat(\"" + fieldName \"));\n");
+              pr.print("    outIndex = Helpers.writeFloat(event.getFloat(\"" + fieldName + "\"));\n");
               break;
             case DOUBLE:
               pr.print("    outIndex = Helpers.writeDouble(event.getDouble(\"" + fieldName \"));\n");
@@ -204,12 +206,69 @@ public class LWES2AVRO {
               pr.print("    out[outIndex++] = 0;\n");
               break;
             case UINT64_ARRAY:
-              ...
+              pr.print("    BigInteger[] v = event.getUInt64Array(\"" + fieldName + "\");\n");
+              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
+              pr.print("    for (int i = 0; i < v.length; i++)\n");
+              pr.print("      outIndex = Helpers.writeLongAvroZigzag(v[i].longValue(), outIndex, out);\n");
+              pr.print("    out[outIndex++] = 0;\n");
+              break;
             case BOOLEAN_ARRAY:
+              pr.print("    boolean[] v = event.getBooleanArray(\"" + fieldName + "\");\n");
+              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
+              pr.print("    for (int i = 0; i < v.length; i++)\n");
+              pr.print("      out[outIndex++] = v[i] ? 1 : 0;\n");
+              pr.print("    out[outIndex++] = 0;\n");
+              break;
             case BYTE_ARRAY:
+              // NOTE: byte-arrays are encoded with the 'bytes' primitive, thus
+              // they differ from all other array types by not being 0-terminated.
+              pr.print("    byte[] v = event.getByteArray(\"" + fieldName + "\");\n");
+              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
+              pr.print("    System.arraycopy(v, 0, out, outIndex, v.length);\n");
+              pr.print("    outIndex += v.length;\n");
+              break;
             case FLOAT_ARRAY:
+              pr.print("    float[] v = event.getFloatArray(\"" + fieldName + "\");\n");
+              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
+              pr.print("    for (int i = 0; i < v.length; i++)\n");
+              pr.print("      outIndex = Helpers.writeFloat(v[i], outIndex, out);\n");
+              pr.print("    out[outIndex++] = 0;\n");
+              break;
             case DOUBLE_ARRAY:
+              pr.print("    double[] v = event.getDoubleArray(\"" + fieldName + "\");\n");
+              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
+              pr.print("    for (int i = 0; i < v.length; i++)\n");
+              pr.print("      outIndex = Helpers.writeDouble(v[i], outIndex, out);\n");
+              pr.print("    out[outIndex++] = 0;\n");
+              break;
             case NUINT16_ARRAY:
+              pr.print("    Integer[] v = event.getIntegerObjArray(\"" + fieldName + "\");\n"
+                     + "    int count = 0;\n"
+                     + "    for (int i = 0; i < v.length; i++)\n"
+                     + "      if (v[i] != null)\n"
+                     + "        count++;\n"
+                     + "    outIndex = Helpers.writeIntAvroZigzag(count, outIndex, out);\n"
+                     + "    for (int i = 0; i < v.length; i++)\n"
+                     + "      if (v[i] != null) {\n"
+                     + "        outIndex = Helpers.writeIntAvroZigzag(i, outIndex, out);\n"
+                     + "        outIndex = Helpers.writeIntAvroZigzag(v[i], outIndex, out);\n"
+                     + "      }\n"
+                     + "    out[outIndex++] = 0;\n");
+              break;
+            case NINT16_ARRAY:
+              pr.print("    Short[] v = event.getShortObjArray(\"" + fieldName + "\");\n"
+                     + "    int count = 0;\n"
+                     + "    for (int i = 0; i < v.length; i++)\n"
+                     + "      if (v[i] != null)\n"
+                     + "        count++;\n"
+                     + "    outIndex = Helpers.writeIntAvroZigzag(count, outIndex, out);\n"
+                     + "    for (int i = 0; i < v.length; i++)\n"
+                     + "      if (v[i] != null) {\n"
+                     + "        outIndex = Helpers.writeIntAvroZigzag(i, outIndex, out);\n"
+                     + "        outIndex = Helpers.writeIntAvroZigzag(v[i], outIndex, out);\n"
+                     + "      }\n"
+                     + "    out[outIndex++] = 0;\n");
+              break;
             case NINT16_ARRAY:
             case NUINT32_ARRAY:
             case NINT32_ARRAY:
