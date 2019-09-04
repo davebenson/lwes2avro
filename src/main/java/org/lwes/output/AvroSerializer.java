@@ -1,3 +1,7 @@
+package org.lwes.output;
+
+import org.lwes.EventTemplateDB;
+import org.lwes.Event;
 
 public class AvroSerializer {
   public AvroSerializer(EventTemplateDB db) {
@@ -8,6 +12,8 @@ public class AvroSerializer {
     this.eventNames = new String[lwesEvents.size()];
     int eventIndex = 0;
 
+    StringBuffer sb = new StringBuffer("[\n");
+    boolean firstEvent = true;
     for (Map.Entry<String, Map<String, BaseType>> entry : db.getEvents()) {
       String eventName = entry.getKey();
       eventNames[eventIndex] = eventName;
@@ -15,23 +21,41 @@ public class AvroSerializer {
       eventNameToIndex.put(eventName, eventIndex);
       Map<String, BaseType> fields = entry.getValue();
       String[] fieldOrdering = new String[fields.size()];
-      StringBuffer sb = new StringBuffer();
+      if (firstEvent) {
+        firstEvent = false;
+      } else {
+        sb.append(",\n");
+      }
       sb.append("  {\n  \"type\":\"record\",\n"
                 "    \"name\":\"" + eventName + "\",\n"
                 "    \"namespace\":\"com.openx\",\n"
                 "    \"fields\":[\n");
       eventNameToFieldList.put(eventName, fieldOrdering);
+      int index = 0;
+      boolean firstField = true;
       for (Map.Entry<String, BaseType> field : fields) {
         String fieldName = field.getKey();
-        ...
+        fieldOrdering[index] = fieldName;
+        if (firstField) {
+          firstField = false;
+        } else {
+          sb.append(",\n");
+        }
+        sb.append("      {\"name\":\"" + fieldName + \", \"type\":[null, ");
+        typeToStringBuffer(field.getValue(), sb);
+        sb.append("]}");
+        index++;
       }
+      sb.append("\n    ]\n  }");
     }
+    sb.append("\n]\n");
   }
 
   //
   // Serialize the event, as the union type that contains all events in the esf file.
   //
   public int serialize(Event event, int startIndex, byte[] data) {
+    ...
   }
 
   public class WriterConfig {
@@ -66,7 +90,7 @@ public class AvroSerializer {
     public int maxEventBytesPerBlock;
     public int initialDataBlockSize;
   }
-public static WriterConfig defaultWriterConfig = new WriterConfig();
+  public static WriterConfig defaultWriterConfig = new WriterConfig();
 
   /**
    * @param os An output stream to write the data to.
