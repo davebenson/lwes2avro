@@ -4,9 +4,28 @@ public class AvroSerializer {
     this.db = db;
     this.eventNameToIndex = new HashMap<String, Integer>();
     this.eventNameToFieldList = new HashMap<String, String[]>();
-    this.eventNames = new String[...];
+    Map<String, Map<String, BaseType>> lwesEvents = db.getEvents();
+    this.eventNames = new String[lwesEvents.size()];
+    int eventIndex = 0;
 
-    ...
+    for (Map.Entry<String, Map<String, BaseType>> entry : db.getEvents()) {
+      String eventName = entry.getKey();
+      eventNames[eventIndex] = eventName;
+      eventNames.add(eventName);
+      eventNameToIndex.put(eventName, eventIndex);
+      Map<String, BaseType> fields = entry.getValue();
+      String[] fieldOrdering = new String[fields.size()];
+      StringBuffer sb = new StringBuffer();
+      sb.append("  {\n  \"type\":\"record\",\n"
+                "    \"name\":\"" + eventName + "\",\n"
+                "    \"namespace\":\"com.openx\",\n"
+                "    \"fields\":[\n");
+      eventNameToFieldList.put(eventName, fieldOrdering);
+      for (Map.Entry<String, BaseType> field : fields) {
+        String fieldName = field.getKey();
+        ...
+      }
+    }
   }
 
   //
@@ -88,8 +107,38 @@ public static WriterConfig defaultWriterConfig = new WriterConfig();
     }
     public void write(Event event) throws UnknownEventTypeException,
                                           BadEventException {
+      if (this.nRawEvents >= maxEventsPerBlock) {
+        flushBuffer();
+      }
+      for (;;) {
+        try {                                          
+          rawDataBlockIndex = serialize(event, rawDataBlockIndex, rawDataBlock);
+          nRawEvents++;
+          return;
+        } catch (ArrayOutOfBoundsException ex) {
+          if (rawDataBlock.length < maxEventBytesPerBlock) {
+            ... resize and retry
+          } else if (rawDataBlockIndex == 0) {
+            ... event too long!
+          } else {
+            // flush buffer, and then retry with empty buffer.
+            flushBuffer();
+          }
+        }
+      }
     }
+
+    private void flushBuffer() {
+      ... deflate or not
+
+      ... write header and data
+    }
+
     public void close() {
+      if (nRawEvents > 0) {
+        flushBuffer();
+      }
+      os.close();
     }
 
     private OutputStream os;
