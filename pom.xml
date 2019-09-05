@@ -1,0 +1,82 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.lwes</groupId>
+  <artifactId>lwes-foreign-output</artifactId>
+  <packaging>jar</packaging>
+  <version>0.0.0</version>
+  <name>lwes-foreign-output</name>
+  <description>LWES outputters in non-lwes format</description>
+  <url>http://lwes.org</url>
+  <organization>
+    <name>LWES</name>
+  </organization>
+  <properties>
+   <java.target>1.8</java.target>
+  </properties>
+
+  <build>
+   <plugins>
+     <plugin>
+       <groupId>org.apache.maven.plugins</groupId>
+       <artifactId>maven-release-plugin</artifactId>
+       <version>2.5.3</version>
+     </plugin>
+
+     <plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-compiler-plugin</artifactId>
+      <version>3.3</version>
+      <configuration>
+          <source>${java.target}</source>
+          <target>${java.target}</target>
+          <encoding>UTF-8</encoding>
+      </configuration>
+     </plugin>
+     <plugin>
+       <groupId>org.apache.maven.plugins</groupId>
+       <artifactId>maven-shade-plugin</artifactId>
+       <version>1.6</version>
+       <executions>
+         <execution>
+           <phase>package</phase>
+           <goals>
+             <goal>shade</goal>
+           </goals>
+           <configuration>
+             <shadedArtifactAttached>true</shadedArtifactAttached>
+             <shadedClassifierName>jar-with-dependencies</shadedClassifierName>
+           </configuration>
+         </execution>
+       </executions>
+     </plugin>
+   </plugins>
+  </build>
+
+  <distributionManagement>
+    <repository>
+      <id>artifactory-releases</id>
+      <name>maven.openx.org-releases</name>
+      <url>http://maven.openx.org:8081/artifactory/libs-release-local</url>
+    </repository>
+    <snapshotRepository>
+      <id>artifactory-snapshots</id>
+      <name>maven.openx.org-snapshots</name>
+      <url>http://maven.openx.org:8081/artifactory/libs-snapshot-local</url>
+    </snapshotRepository>
+  </distributionManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.lwes</groupId>
+      <artifactId>lwes-java</artifactId>
+      <version>2.2.1</version>
+    </dependency>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.12</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+</project>

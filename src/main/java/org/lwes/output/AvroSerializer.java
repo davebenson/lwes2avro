@@ -27,9 +27,9 @@ public class AvroSerializer {
         sb.append(",\n");
       }
       sb.append("  {\n  \"type\":\"record\",\n"
-                "    \"name\":\"" + eventName + "\",\n"
-                "    \"namespace\":\"com.openx\",\n"
-                "    \"fields\":[\n");
+              + "    \"name\":\"" + eventName + "\",\n"
+              + "    \"namespace\":\"com.openx\",\n"
+              + "    \"fields\":[\n");
       eventNameToFieldList.put(eventName, fieldOrdering);
       int index = 0;
       boolean firstField = true;
@@ -41,7 +41,7 @@ public class AvroSerializer {
         } else {
           sb.append(",\n");
         }
-        sb.append("      {\"name\":\"" + fieldName + \", \"type\":[null, ");
+        sb.append("      {\"name\":\"" + fieldName + "\", \"type\":[null, ");
         typeToStringBuffer(field.getValue(), sb);
         sb.append("]}");
         index++;
@@ -55,6 +55,10 @@ public class AvroSerializer {
   // Serialize the event, as the union type that contains all events in the esf file.
   //
   public int serialize(Event event, int startIndex, byte[] data) {
+    Integer index = eventNameToIndex.get(event.getEventName());
+    if (index == null) {
+      throw new RuntimeException("invalid event name: " + event.getEventName());
+    }
     ...
   }
 
