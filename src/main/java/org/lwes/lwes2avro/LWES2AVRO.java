@@ -1,6 +1,14 @@
 package org.lwes.lwes2avro;
 
+import org.lwes.FieldType;
+import org.lwes.BaseType;
 import org.lwes.db.EventTemplateDB;
+import java.io.PrintWriter;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.util.Map;
+import java.util.ArrayList;
+import java.util.HashMap;
 
 public class LWES2AVRO {
 
@@ -21,7 +29,28 @@ public class LWES2AVRO {
       default: throw new RuntimeException("bad primitive-type: " + type);
     }
   }
+
+
+  static int baseToken(int token) {
+    if (token < 16)
+      return token;
+    else if (token <= 0x80)
+      throw new RuntimeException("base token");
+    else if (token < 0x8d)
+      return token - 0x80;
+    else if (token < 0x99)
+      return token - 0x8d + 1;
+    else
+      throw new RuntimeException("base token");
+  }
+
+
+
   public static void main(String[] args) {
+    if (args.length != 2) {
+      System.err.println("usage: LWES2AVRO DBFILE OUTPUT");
+      System.exit(1);
+    }
     String dbfile = args[0];
     String outdir = args[1];
     String esfAvroNamespace = "com.openx";
@@ -30,40 +59,48 @@ public class LWES2AVRO {
     // Parse and initialize.
     //
     EventTemplateDB db = new EventTemplateDB();
-    db.setESFFile(dbfile);
+    db.setESFFile(new File(dbfile));
     db.initialize();
 
     //
     // Generate avro schema.
 
-    for (Map.Entry<String, Map<String, BaseType>> entry : db.getEvents()) {
+    ArrayList<String> eventNames = new ArrayList<>();
+    HashMap<String, ArrayList<String>> fieldsByEvent = new HashMap<>();
+    for (Map.Entry<String, Map<String, BaseType>> entry : db.getEvents().entrySet()) {
       String eventName = entry.getKey();
       eventNames.add(eventName);
+      System.err.println("event = " + eventName);
       Map<String, BaseType> fields = entry.getValue();
       ArrayList<String> fieldOrdering = new ArrayList<>();
-      try (PrintWriter pr = outdir + "/" + eventName + ".avsc") {
+      String escapedEventName = eventName.replace("::", "__");
+      try (PrintWriter pr = new PrintWriter(outdir + "/" + escapedEventName + ".avsc")) {
         pr.print("{\n  \"type\":\"record\",\n"
-                    "  \"name\":\"" + eventName + "\",\n"
-                    "  \"namespace\":\"com.openx\",\n"
-                    "  \"fields\":[\n");
+                 +  "  \"name\":\"" + eventName + "\",\n"
+                 +  "  \"namespace\":\"com.openx\",\n"
+                 +  "  \"fields\":[\n");
         fieldsByEvent.put(eventName, fieldOrdering);
-        for (Map.Entry<String, BaseType> field : fields) {
+        boolean isFirst = true;
+        for (Map.Entry<String, BaseType> field : fields.entrySet()) {
           String fieldName = field.getKey();
           BaseType fieldBaseType = field.getValue();
+          System.err.println("name=" + fieldName + "; baseType=" + fieldBaseType);
           fieldOrdering.add(fieldName);
           FieldType fieldType = fieldBaseType.getType();
-          FieldType primitiveType = FieldType.byToken(fieldType.token & 0x3f);
+          System.err.println("fieldType=" + fieldType + "; token=" + fieldType.token);
+          FieldType primitiveType = FieldType.byToken((byte) baseToken((int)fieldType.token & 0xff));
           String primTypeAsString = primitiveTypeAsString(primitiveType);
+          String fieldTypeAsJsonString;
           if ((fieldType.token & 0xc0) == 0) {
             // classic primitive types
-            fieldTypeAsJsonString = "[null,\"" + primTypeAsString + "\"]";
+            fieldTypeAsJsonString = "[\"null\",\"" + primTypeAsString + "\"]";
           } else if (fieldType == FieldType.BYTE_ARRAY) {
-            fieldTypeAsJsonString = "[null,\"bytes\"]";
+            fieldTypeAsJsonString = "[\"null\",\"bytes\"]";
           } else if ((fieldType.token & 0x40) == 0) {
             // arrays of classic primitive types
-            fieldTypeAsJsonString = "[null,{\"type\":\"array\",\"items\":\""
+            fieldTypeAsJsonString = "[\"null\",{\"type\":\"array\",\"items\":\""
                                   + primTypeAsString
-                                  + "\"}\";
+                                  + "\"}\"";
           } else {
             // sparse arrays of classic primitive types
             //
@@ -77,7 +114,7 @@ public class LWES2AVRO {
             //
             // So a nullable-MyType-array has type:
             //    {{record, [index,int],[value,MyType]}}  //XXX
-            fieldTypeAsJsonString = "[null,{\"type\":\"array\","
+            fieldTypeAsJsonString = "[\"null\",{\"type\":\"array\","
                                   + "\"items\":{\"type\":\"record\":"
                                   +           "\"fields\":"
                                   +              "[{\"type\":\"int\",\"name\":\"index\"},"
@@ -87,203 +124,35 @@ public class LWES2AVRO {
           }
           if (!isFirst) {
             pr.print(",\n");
+          } else {
+            pr.print("\n");
             isFirst = false;
           }
-          pr.print("  { \"name\":\"" + fieldName
+           
+          pr.print("      { \"name\":\"" + fieldName
                     + ",\"type\":" + fieldTypeAsJsonString + "}");
         }
-        pr.print("  ]\n}\n");
+        pr.print("\n  ]\n}\n");
+      } catch (FileNotFoundException ex) {
+        throw new RuntimeException(ex);
       }
-
-      //
-      // Part 2. Emit org.lwes.Event -> avro binary-data code.
-      //
-      try (PrintWriter pr = outdir + "/" + eventName + ".java") {
-        pr.print("package ...;\n");
-        pr.print("import org.lwes.Event;\n");
-        pr.print("import org.lwes.lwes2avro.Helpers;\n");
-        pr.print("public class " + event + " {\n"
-               + "  static int pack(Event event, byte[] out) {\n");
-        pr.print("  int outIndex = 0;\n");
-        for (String fieldName : fieldOrdering) {
-          BaseType baseType = fields.get(fieldName);
-          FieldType fieldType = baseType.getType();
-          FieldType token = fieldType.token;
-          FieldType primitiveType = FieldType.byToken(fieldType.token & 0x3f);
-          String primTypeAsString = primitiveTypeAsString(primitiveType);
-          pr.print("  if (event.hasField(\"" + fieldName + "\") {\n");
-          pr.print("    out[outIndex++] = 2;\n");
-          switch (fieldType) {
-            case UINT16:
-              pr.print("    Integer v = event.getUInt16(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v, outIndex, out);\n");
-              break;
-            case INT16:
-              pr.print("    Short v = event.getInt16(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v, outIndex, out);\n");
-              break;
-            case UINT32:
-              pr.print("    Long v = event.getUInt32(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeLongAvroZigzag(v, outIndex, out);\n");
-              break;
-            case INT32:
-              pr.print("    Integer v = event.getInt32(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v, outIndex, out);\n");
-              break;
-            case STRING:
-              pr.print("    String v = event.getString(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeString(v, outIndex, out);\n");
-              break;
-            case IPADDR:
-              pr.print("    byte[] v = event.getIPAddress(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIPAddress(v, outIndex, out);\n");
-              break;
-            case INT64:
-              pr.print("    byte[] v = event.getIPAddress(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeLongAvroZigzag(v, outIndex, out);\n");
-              break;
-            case UINT64:
-              pr.print("    BigInteger v = event.getUInt64(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeLongAvroZigzag(v.longValue(), outIndex, out);\n");
-              break;
-            case BOOLEAN:
-              pr.print("    boolean v = event.getBoolean(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeBoolean(v, outIndex, out);\n");
-              break;
-            case BYTE:
-              pr.print("    int v = event.getByte(\"" + fieldName + "\");\n");
-              pr.print("    v &= 0xff;\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v, outIndex, out);\n");
-              break;
-            case FLOAT:
-              pr.print("    outIndex = Helpers.writeFloat(event.getFloat(\"" + fieldName + "\"));\n");
-              break;
-            case DOUBLE:
-              pr.print("    outIndex = Helpers.writeDouble(event.getDouble(\"" + fieldName \"));\n");
-              break;
-            case UINT16_ARRAY:
-              pr.print("    int[] v = event.getUInt16Array(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeIntAvroZigzag(v[i], outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case INT16_ARRAY:
-              pr.print("    short[] v = event.getInt16Array(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeIntAvroZigzag(v[i], outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case UINT32_ARRAY:
-              pr.print("    long[] v = event.getUInt32Array(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeLongAvroZigzag(v[i], outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case INT32_ARRAY:
-              pr.print("    int[] v = event.getInt32Array(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeIntAvroZigzag(v[i], outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case STRING_ARRAY:
-              pr.print("    String[] v = event.getStringArray(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeString(v[i], outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case IP_ADDR_ARRAY:
-              throw new RuntimeException("lwes-java doesn't support arrays of ip-addresses");
-            case INT64_ARRAY:
-              pr.print("    long[] v = event.getInt64Array(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeLongAvroZigzag(v[i], outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case UINT64_ARRAY:
-              pr.print("    BigInteger[] v = event.getUInt64Array(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeLongAvroZigzag(v[i].longValue(), outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case BOOLEAN_ARRAY:
-              pr.print("    boolean[] v = event.getBooleanArray(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      out[outIndex++] = v[i] ? 1 : 0;\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case BYTE_ARRAY:
-              // NOTE: byte-arrays are encoded with the 'bytes' primitive, thus
-              // they differ from all other array types by not being 0-terminated.
-              pr.print("    byte[] v = event.getByteArray(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    System.arraycopy(v, 0, out, outIndex, v.length);\n");
-              pr.print("    outIndex += v.length;\n");
-              break;
-            case FLOAT_ARRAY:
-              pr.print("    float[] v = event.getFloatArray(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeFloat(v[i], outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case DOUBLE_ARRAY:
-              pr.print("    double[] v = event.getDoubleArray(\"" + fieldName + "\");\n");
-              pr.print("    outIndex = Helpers.writeIntAvroZigzag(v.length, outIndex, out);\n");
-              pr.print("    for (int i = 0; i < v.length; i++)\n");
-              pr.print("      outIndex = Helpers.writeDouble(v[i], outIndex, out);\n");
-              pr.print("    out[outIndex++] = 0;\n");
-              break;
-            case NUINT16_ARRAY:
-              pr.print("    Integer[] v = event.getIntegerObjArray(\"" + fieldName + "\");\n"
-                     + "    int count = 0;\n"
-                     + "    for (int i = 0; i < v.length; i++)\n"
-                     + "      if (v[i] != null)\n"
-                     + "        count++;\n"
-                     + "    outIndex = Helpers.writeIntAvroZigzag(count, outIndex, out);\n"
-                     + "    for (int i = 0; i < v.length; i++)\n"
-                     + "      if (v[i] != null) {\n"
-                     + "        outIndex = Helpers.writeIntAvroZigzag(i, outIndex, out);\n"
-                     + "        outIndex = Helpers.writeIntAvroZigzag(v[i], outIndex, out);\n"
-                     + "      }\n"
-                     + "    out[outIndex++] = 0;\n");
-              break;
-            case NINT16_ARRAY:
-              pr.print("    Short[] v = event.getShortObjArray(\"" + fieldName + "\");\n"
-                     + "    int count = 0;\n"
-                     + "    for (int i = 0; i < v.length; i++)\n"
-                     + "      if (v[i] != null)\n"
-                     + "        count++;\n"
-                     + "    outIndex = Helpers.writeIntAvroZigzag(count, outIndex, out);\n"
-                     + "    for (int i = 0; i < v.length; i++)\n"
-                     + "      if (v[i] != null) {\n"
-                     + "        outIndex = Helpers.writeIntAvroZigzag(i, outIndex, out);\n"
-                     + "        outIndex = Helpers.writeIntAvroZigzag(v[i], outIndex, out);\n"
-                     + "      }\n"
-                     + "    out[outIndex++] = 0;\n");
-              break;
-            case NINT16_ARRAY:
-            case NUINT32_ARRAY:
-            case NINT32_ARRAY:
-            case NSTRING_ARRAY:
-            case NINT64_ARRAY:
-            case NUINT64_ARRAY:
-            case NBOOLEAN_ARRAY:
-            case NBYTE_ARRAY:
-            case NFLOAT_ARRAY:
-            case NDOUBLE_ARRAY:
-:
-          }
-          } else 
-
+    }
+    try (PrintWriter pr = new PrintWriter(outdir + "/" + "AnyEvent" + ".avsc")) {
+      pr.print("{\n  \"type\":\"record\",\n"
+               +  "  \"name\":\"" + "AnyEvent" + "\",\n"
+               +  "  \"namespace\":\"com.openx\",\n"
+               +  "  \"fields\":[\n"
+               +  "    \"name\":\"event\",\n"
+               +  "    \"type\":[");
+      boolean isFirst = true;
+      for (String name : eventNames) {
+        pr.print((isFirst ? "\n" : ",\n")
+                + "      \"" + name + "\"");
+        isFirst = false;
       }
+      pr.print("\n    ]\n  ]\n}\n");
+    } catch (FileNotFoundException ex) {
+      throw new RuntimeException(ex);
     }
   }
 }
